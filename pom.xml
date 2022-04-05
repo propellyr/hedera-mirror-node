@@ -65,7 +65,7 @@
         <embedded.testcontainers.version>2.1.4</embedded.testcontainers.version>
         <flyway.version>7.15.0</flyway.version>
         <git-commit-id-plugin.version>4.0.4</git-commit-id-plugin.version>
-        <grpc-spring-boot.version>2.11.0.RELEASE</grpc-spring-boot.version>
+        <grpc-spring-boot.version>2.13.1.RELEASE</grpc-spring-boot.version>
         <grpc.version>1.45.1</grpc.version>
         <guava.version>31.1-jre</guava.version>
         <hedera-protobuf.version>0.25.0-SNAPSHOT</hedera-protobuf.version>
