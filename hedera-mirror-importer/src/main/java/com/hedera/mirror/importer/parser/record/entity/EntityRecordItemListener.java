@@ -101,6 +101,7 @@ import com.hedera.mirror.importer.parser.CommonParserProperties;
 import com.hedera.mirror.importer.parser.record.NonFeeTransferExtractionStrategy;
 import com.hedera.mirror.importer.parser.record.RecordItemListener;
 import com.hedera.mirror.importer.parser.record.RecordParserProperties;
+import com.hedera.mirror.importer.parser.record.ethereum.EthereumTransactionParser;
 import com.hedera.mirror.importer.parser.record.transactionhandler.TransactionHandler;
 import com.hedera.mirror.importer.parser.record.transactionhandler.TransactionHandlerFactory;
 import com.hedera.mirror.importer.repository.FileDataRepository;
@@ -111,6 +112,7 @@ import com.hedera.mirror.importer.repository.FileDataRepository;
 public class EntityRecordItemListener implements RecordItemListener {
     private final AddressBookService addressBookService;
     private final ContractResultService contractResultService;
+    private final EthereumTransactionParser ethereumTransactionParser;
     private final EntityIdService entityIdService;
     private final EntityListener entityListener;
     private final EntityProperties entityProperties;
@@ -128,9 +130,11 @@ public class EntityRecordItemListener implements RecordItemListener {
                                     TransactionHandlerFactory transactionHandlerFactory,
                                     FileDataRepository fileDataRepository,
                                     RecordParserProperties parserProperties,
-                                    ContractResultService contractResultService) {
+                                    ContractResultService contractResultService,
+                                    EthereumTransactionParser ethereumTransactionParser) {
         this.addressBookService = addressBookService;
         this.contractResultService = contractResultService;
+        this.ethereumTransactionParser = ethereumTransactionParser;
         this.entityIdService = entityIdService;
         this.entityListener = entityListener;
         this.entityProperties = entityProperties;
@@ -231,6 +235,8 @@ public class EntityRecordItemListener implements RecordItemListener {
                 insertTokenUpdate(recordItem);
             } else if (body.hasTokenWipe()) {
                 insertTokenAccountWipe(recordItem);
+            } else if (body.hasEthereumTransaction()) {
+                insertEthereumTransaction(recordItem);
             }
 
             // Record token transfers can be populated for multiple transaction types
@@ -640,11 +646,12 @@ public class EntityRecordItemListener implements RecordItemListener {
         return null;
     }
 
-    private AccountAmount findAccountAmount(Predicate<AccountAmount> accountAmountPredicate, TokenID tokenId, TransactionBody body){
+    private AccountAmount findAccountAmount(Predicate<AccountAmount> accountAmountPredicate, TokenID tokenId,
+                                            TransactionBody body) {
         if (!body.hasCryptoTransfer()) {
             return null;
         }
-        final List<TokenTransferList> tokenTransfersLists = body.getCryptoTransfer().getTokenTransfersList();
+        List<TokenTransferList> tokenTransfersLists = body.getCryptoTransfer().getTokenTransfersList();
         for (TokenTransferList transferList : tokenTransfersLists) {
             if (!transferList.getToken().equals(tokenId)) {
                 continue;
@@ -683,7 +690,7 @@ public class EntityRecordItemListener implements RecordItemListener {
 
     private void insertFungibleTokenTransfers(
             long consensusTimestamp, TransactionBody body, boolean isTokenDissociate,
-            TokenID tokenId, EntityId entityTokenId, EntityId payerAccountId, List<AccountAmount> tokenTransfers){
+            TokenID tokenId, EntityId entityTokenId, EntityId payerAccountId, List<AccountAmount> tokenTransfers) {
         for (AccountAmount accountAmount : tokenTransfers) {
             EntityId accountId = EntityId.of(accountAmount.getAccountID());
             long amount = accountAmount.getAmount();
@@ -708,13 +715,12 @@ public class EntityRecordItemListener implements RecordItemListener {
                     // Is there any account amount inside the body's transfer list for the given tokenId
                     // with the same accountId as the accountAmount from the record?
                     AccountAmount accountAmountWithSameIdInsideBody = findAccountAmount(
-                                    aa -> aa.getAccountID().equals(accountAmount.getAccountID()) && aa.getIsApproval(),
-                                    tokenId, body);
+                            aa -> aa.getAccountID().equals(accountAmount.getAccountID()) && aa.getIsApproval(),
+                            tokenId, body);
                     if (accountAmountWithSameIdInsideBody != null) {
                         tokenTransfer.setIsApproval(true);
                     }
-                }
-                else {
+                } else {
                     tokenTransfer.setIsApproval(accountAmountInsideTransferList.getIsApproval());
                 }
             }
@@ -759,7 +765,8 @@ public class EntityRecordItemListener implements RecordItemListener {
 
     private void insertNonFungibleTokenTransfers(
             long consensusTimestamp, TransactionBody body, TokenID tokenId,
-            EntityId entityTokenId, EntityId payerAccountId, List<com.hederahashgraph.api.proto.java.NftTransfer> nftTransfersList) {
+            EntityId entityTokenId, EntityId payerAccountId,
+            List<com.hederahashgraph.api.proto.java.NftTransfer> nftTransfersList) {
         for (NftTransfer nftTransfer : nftTransfersList) {
             long serialNumber = nftTransfer.getSerialNumber();
             if (serialNumber == NftTransferId.WILDCARD_SERIAL_NUMBER) {
@@ -1106,6 +1113,20 @@ public class EntityRecordItemListener implements RecordItemListener {
         }
 
         return autoAssociatedAccounts;
+    }
+
+    private void insertEthereumTransaction(RecordItem recordItem) {
+        if (entityProperties.getPersist().isEthereumTransactions()) {
+            var ethereumTransaction = ethereumTransactionParser.parse(recordItem.getTransactionBody()
+                    .getEthereumTransaction());
+            if (ethereumTransaction == ethereumTransaction) {
+                return;
+            }
+
+            var transactionRecord = recordItem.getRecord();
+            ethereumTransaction.setHash(DomainUtils.toBytes(transactionRecord.getEthereumHash()));
+            entityListener.onEthereumTransaction(ethereumTransaction);
+        }
     }
 
     /**
